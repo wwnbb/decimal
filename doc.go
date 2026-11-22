@@ -22,12 +22,20 @@
 // [Decimal.IsMultipleOf] checks the same thing without rounding, and
 // [Decimal.Rescale] and [Decimal.Trim] change only the scale.
 //
+// [Decimal.QuoRound] divides and rounds to a given scale in one exact step
+// (the rounding is decided from the exact remainder, not from the 19-digit
+// result of [Decimal.Quo]). [Min] and [Max] pick by value.
+//
 // [NewFromFloat64], [Decimal.Float64] and [Decimal.Int64] convert to and
-// from float64 and scaled integers.
+// from float64 and scaled integers. A Decimal marshals to a bare JSON number
+// and reads a JSON number or string (never null); it also implements
+// [encoding.TextMarshaler], [encoding.TextUnmarshaler] and
+// [encoding.TextAppender].
 //
 // Operations never panic on bad input: they return errors satisfying
 // errors.Is with [ErrOverflow], [ErrDivisionByZero], [ErrSyntax],
-// [ErrInvalidStep], [ErrInvalidMode] or [ErrInexact].
+// [ErrInvalidStep], [ErrInvalidMode] or [ErrInexact]. [Decimal.UnmarshalJSON]
+// and [Decimal.UnmarshalText] leave the value unchanged on error.
 // Only [MustParse], and [Decimal.Round] called with an unknown
 // [RoundingMode] (a programming error), panic.
 package decimal

@@ -44,8 +44,9 @@ table instead of listing it.
 
 - `Sqrt`, `Exp`, `Expm1`, `Log`, `Log1p`, `Log2`, `Log10`, `Pow`, `PowInt`, `Inv`; the `bint`
   exp/log code and the tables `bfact`, `bexp`, `blog`, `bnlog10`.
-- All serialization: JSON, Text, Binary, BSON, IEEE decimal128, `sql.Scanner`/`driver.Valuer`,
-  `NullDecimal`; `NewFromFloat64`, `Float64`, `NewFromInt64`, `Int64`.
+- Serialization except JSON and Text (see "Encoding" below): Binary, BSON, IEEE decimal128, `sql.Scanner`/`driver.Valuer`,
+  `NullDecimal`; upstream's `NewFromInt64` and `Int64` (`NewFromFloat64`, `Float64` and a
+  different `Int64` exist here, see "New code").
 - `fmt.Formatter` (`Format`).
 - `Sum`, `Mean`, `Prod`; `AddMul`, `SubMul`, `AddQuo`, `SubQuo`.
 - All `*Exact` variants (`MulExact`, `AddExact`, `SubExact`, `QuoExact`, `ParseExact`).
@@ -73,6 +74,16 @@ table instead of listing it.
   methods `Round`, `Floor`, `Ceil`, `Trunc`, `Pad`, `Rescale`, `Trim`. `Round` never pads;
   `Rescale` and `Trim` are new and differ from upstream's `Rescale`/`Trim`.
 
+## Encoding (v0.2.0, adapted from upstream)
+
+`encoding.go` carries the attribution header: `UnmarshalJSON`, `UnmarshalText`, `MarshalText`
+and `AppendText` follow upstream's methods of the same names. Differences: `MarshalJSON` writes
+a bare JSON number, upstream a quoted string; `UnmarshalJSON` rejects `null` (error matching
+`ErrSyntax`), upstream ignores it; strings with escapes are rejected; surrounding whitespace is
+trimmed as in `Parse`; on error the receiver is left unchanged; `AppendText` has the standard
+`encoding.TextAppender` signature `([]byte, error)`. Still dropped: Binary, BSON, IEEE 754
+decimal128, `sql.Scanner`, `driver.Valuer`, `NullDecimal`.
+
 ## New code (not derived from upstream)
 
 These files contain no upstream code and carry no attribution header:
@@ -81,6 +92,9 @@ These files contain no upstream code and carry no attribution header:
 | --- | --- |
 | `round.go` | `RoundingMode`, `Round`, `Rescale`, `Trim`, `RoundStep`, `IsMultipleOf`, `ErrInvalidStep`, `ErrInvalidMode`, `ErrInexact` |
 | `convert.go` | `NewFromFloat64`, `Float64`, `Int64` |
+| `quo.go` | `QuoRound` (v0.2.0) |
+| `minmax.go` | `Min`, `Max` (v0.2.0) |
+| `quo_test.go`, `quo_fuzz_test.go`, `encoding_test.go` | tests and `FuzzQuoRound` (v0.2.0) |
 | `fuzz_test.go`, `round_test.go`, `convert_test.go`, `bench_test.go` | tests, fuzzers, benchmarks, allocation checks |
 
 `round.go` uses the ported `fint`/`bint` helpers (`quoRem`, `lsh`, `mul`, `dbl`, `inc`, ...) and the
@@ -96,15 +110,22 @@ strings are built for large or tiny floats.
 
 | Benchmark | ns/op | B/op | allocs/op |
 | --- | ---: | ---: | ---: |
-| Parse `65000.1` | 25.16 | 0 | 0 |
-| Parse `0.012` | 20.32 | 0 | 0 |
-| String | 18.01 | 8 | 1 |
-| Add | 5.73 | 0 | 0 |
-| Mul | 5.34 | 0 | 0 |
-| Quo exact (`65000.17 / 0.01`) | 32.29 | 0 | 0 |
-| Quo inexact (`65000.17 / 0.012`) | 298.8 | 40 | 2 |
-| Cmp | 5.99 | 0 | 0 |
-| RoundStep `65000.17` step `0.1` HalfUp | 6.29 | 0 | 0 |
-| RoundStep `0.01234` step `0.001` Floor | 7.23 | 0 | 0 |
+| Parse `65000.1` | 26.03 | 0 | 0 |
+| Parse `0.012` | 21.49 | 0 | 0 |
+| String | 18.77 | 8 | 1 |
+| Add | 6.02 | 0 | 0 |
+| Mul | 5.58 | 0 | 0 |
+| Quo exact (`65000.17 / 0.01`) | 33.53 | 0 | 0 |
+| Quo inexact (`65000.17 / 0.012`) | 315.4 | 40 | 2 |
+| QuoRound `65000.17 / 3`, scale 8, HalfEven | 13.94 | 0 | 0 |
+| QuoRound `1 / 3`, scale 19, Floor | 10.14 | 0 | 0 |
+| QuoRound `0.9999999999999999999 / 7`, scale 19, HalfEven (`*big.Int`) | 360.0 | 40 | 2 |
+| MarshalJSON | 9.76 | 0 | 0 |
+| UnmarshalJSON `65000.17` | 34.71 | 0 | 0 |
+| Cmp | 6.75 | 0 | 0 |
+| RoundStep `65000.17` step `0.1` HalfUp | 7.34 | 0 | 0 |
+| RoundStep `0.01234` step `0.001` Floor | 7.87 | 0 | 0 |
 
-An inexact `Quo` takes the `*big.Int` path (upstream behaviour) and allocates.
+An inexact `Quo` takes the `*big.Int` path (upstream behaviour) and allocates. `QuoRound`
+allocates only when the aligned operands do not fit uint64. The benchmark discards the
+`MarshalJSON` result, which is why it shows 0 allocs; real calls allocate the returned slice.

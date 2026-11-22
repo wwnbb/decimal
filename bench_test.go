@@ -61,6 +61,47 @@ func BenchmarkQuo(b *testing.B) {
 	})
 }
 
+func BenchmarkQuoRound(b *testing.B) {
+	d, e := MustParse("65000.17"), MustParse("3")
+	b.Run("fast/HalfEven", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			benchSink, _ = d.QuoRound(e, 8, HalfEven)
+		}
+	})
+	b.Run("fast/Floor", func(b *testing.B) {
+		x, y := MustParse("1"), MustParse("3")
+		b.ReportAllocs()
+		for b.Loop() {
+			benchSink, _ = x.QuoRound(y, 19, Floor)
+		}
+	})
+	b.Run("bint", func(b *testing.B) {
+		x, y := MustParse("0.9999999999999999999"), MustParse("7")
+		b.ReportAllocs()
+		for b.Loop() {
+			benchSink, _ = x.QuoRound(y, 19, HalfEven)
+		}
+	})
+}
+
+func BenchmarkMarshalJSON(b *testing.B) {
+	d := MustParse("65000.17")
+	b.ReportAllocs()
+	for b.Loop() {
+		_, _ = d.MarshalJSON()
+	}
+}
+
+func BenchmarkUnmarshalJSON(b *testing.B) {
+	data := []byte(`65000.17`)
+	var d Decimal
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = d.UnmarshalJSON(data)
+	}
+}
+
 func BenchmarkCmp(b *testing.B) {
 	d, e := MustParse("65000.17"), MustParse("0.012")
 	b.ReportAllocs()
@@ -91,11 +132,22 @@ func TestAllocs(t *testing.T) {
 	step := MustParse("0.1")
 	step2 := MustParse("0.001")
 	small := MustParse("0.01234")
+	three := MustParse("3")
+	buf := make([]byte, 0, 32)
+	num := []byte(`65000.17`)
+	var dst Decimal
 	tests := []struct {
 		name string
 		max  float64
 		fn   func()
 	}{
+		{"QuoRound", 0, func() { benchSink, _ = d.QuoRound(three, 8, HalfEven) }},
+		{"QuoRound19", 0, func() { benchSink, _ = MustParse("1").QuoRound(three, 19, Floor) }},
+		{"AppendText", 0, func() { buf, _ = d.AppendText(buf[:0]) }},
+		{"UnmarshalJSON", 0, func() { _ = dst.UnmarshalJSON(num) }},
+		{"UnmarshalText", 0, func() { _ = dst.UnmarshalText(num) }},
+		{"Min", 0, func() { benchSink = Min(d, e) }},
+		{"Max", 0, func() { benchSink = Max(d, e) }},
 		{"Add", 0, func() { benchSink, _ = d.Add(e) }},
 		{"Sub", 0, func() { benchSink, _ = d.Sub(e) }},
 		{"Mul", 0, func() { benchSink, _ = d.Mul(e) }},

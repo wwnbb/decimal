@@ -18,13 +18,19 @@ even; an integer part that does not fit is an error.
 
 - Construction: `Parse`, `MustParse`, `New(coef, scale)`, `NewFromFloat64`.
 - Arithmetic (all return an error instead of panicking): `Add`, `Sub`, `Mul`,
-  `Quo`, `QuoRem`.
+  `Quo`, `QuoRem`, and `QuoRound(e, scale, mode)`, the exact quotient rounded
+  to `scale` digits by a rounding mode.
+- `Min(a, b)`, `Max(a, b)`.
 - Comparison and predicates: `Cmp`, `Equal`, `Sign`, `IsZero`, `IsPos`,
   `IsNeg`, `IsInt`, `Neg`, `Abs`, `Scale`, `Prec`.
 - Rounding: `Round(scale, mode)`, `RoundStep(step, mode)`, `IsMultipleOf(step)`,
   with modes `Floor`, `Ceil`, `Down`, `Up`, `HalfUp`, `HalfEven`.
 - Scale: `Rescale(scale)` pads with zeros (or drops zeros), `Trim()`.
 - Output: `String`, `Float64`, `Int64(scale)`.
+- Encoding: `MarshalJSON` writes a bare JSON number (`{"price":65000.10}`);
+  `UnmarshalJSON` reads a JSON number or a string and rejects `null`;
+  `MarshalText`, `UnmarshalText` and `AppendText` (`encoding.TextAppender`)
+  use the `String`/`Parse` forms.
 - Errors, for `errors.Is`: `ErrOverflow`, `ErrDivisionByZero`, `ErrSyntax`,
   `ErrInvalidStep`, `ErrInvalidMode`, `ErrInexact`.
 
