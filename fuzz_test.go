@@ -2,6 +2,7 @@ package decimal
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"math/big"
 	"testing"
@@ -272,6 +273,37 @@ func FuzzCmp(f *testing.F) {
 // TestModelGrid runs the fuzz checks over a fixed grid that includes the
 // coefficients up to maxFint, which int64 inputs of the fuzz targets cannot reach.
 func TestModelGrid(t *testing.T) {
+	grid := modelGrid()
+	for _, d := range grid {
+		for _, e := range grid {
+			checkAdd(t, d, e)
+			checkSub(t, d, e)
+			checkMul(t, d, e)
+			checkQuo(t, d, e)
+			checkCmp(t, d, e)
+		}
+	}
+}
+
+// TestRoundModelGrid runs the rounding checks over the same grid.
+func TestRoundModelGrid(t *testing.T) {
+	grid := modelGrid()
+	for _, d := range grid {
+		for mode := Floor; mode <= HalfEven; mode++ {
+			for target := -1; target <= 20; target++ {
+				checkRound(t, d, target, mode)
+			}
+			for _, step := range grid {
+				checkRoundStep(t, d, step, mode)
+			}
+		}
+		for _, step := range grid {
+			checkIsMultipleOf(t, d, step)
+		}
+	}
+}
+
+func modelGrid() []Decimal {
 	var grid []Decimal
 	for _, s := range []string{
 		"0", "0.0000000000000000000", "1", "-1", "3", "7", "0.5", "1.5", "2.5", "-2.5",
@@ -285,13 +317,155 @@ func TestModelGrid(t *testing.T) {
 	} {
 		grid = append(grid, MustParse(s))
 	}
-	for _, d := range grid {
-		for _, e := range grid {
-			checkAdd(t, d, e)
-			checkSub(t, d, e)
-			checkMul(t, d, e)
-			checkQuo(t, d, e)
-			checkCmp(t, d, e)
+	return grid
+}
+
+// roundRatInt rounds x to an integer using the mode.
+func roundRatInt(x *big.Rat, mode RoundingMode) *big.Int {
+	fl := new(big.Int).Div(x.Num(), x.Denom()) // Euclidean, Denom > 0: floor
+	if x.IsInt() {
+		return fl
+	}
+	ceil := new(big.Int).Add(fl, big.NewInt(1))
+	switch mode {
+	case Floor:
+		return fl
+	case Ceil:
+		return ceil
+	case Down:
+		if x.Sign() >= 0 {
+			return fl
+		}
+		return ceil
+	case Up:
+		if x.Sign() >= 0 {
+			return ceil
+		}
+		return fl
+	}
+	frac := new(big.Rat).Sub(x, new(big.Rat).SetInt(fl))
+	switch c := frac.Cmp(big.NewRat(1, 2)); {
+	case c < 0:
+		return fl
+	case c > 0:
+		return ceil
+	}
+	// exactly half
+	if mode == HalfUp {
+		if x.Sign() >= 0 {
+			return ceil
+		}
+		return fl
+	}
+	if fl.Bit(0) == 0 {
+		return fl
+	}
+	return ceil
+}
+
+func ratPow10(n int) *big.Rat {
+	return new(big.Rat).SetInt(new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(n)), nil))
+}
+
+func checkRound(t *testing.T, d Decimal, target int, mode RoundingMode) {
+	t.Helper()
+	name := fmt.Sprintf("(%v).Round(%v, %v)", d, target, mode)
+	got := d.Round(target, mode)
+	validDecimal(t, name, got)
+	scale := min(max(target, 0), MaxScale)
+	if d.Scale() <= scale {
+		if got != d {
+			t.Errorf("%v = %+v, want d unchanged", name, got)
+		}
+		return
+	}
+	p := ratPow10(scale)
+	n := roundRatInt(new(big.Rat).Mul(ratOf(d), p), mode)
+	want := new(big.Rat).Quo(new(big.Rat).SetInt(n), p)
+	if ratOf(got).Cmp(want) != 0 || got.Scale() != scale {
+		t.Errorf("%v = %q (scale %v), want %v at scale %v", name, got, got.Scale(), want.FloatString(20), scale)
+	}
+}
+
+func checkRoundStep(t *testing.T, d, step Decimal, mode RoundingMode) {
+	t.Helper()
+	name := fmt.Sprintf("(%v).RoundStep(%v, %v)", d, step, mode)
+	got, err := d.RoundStep(step, mode)
+	if step.Sign() <= 0 {
+		if !errors.Is(err, ErrInvalidStep) {
+			t.Errorf("%v: error %v, want ErrInvalidStep", name, err)
+		}
+		return
+	}
+	n := roundRatInt(new(big.Rat).Quo(ratOf(d), ratOf(step)), mode)
+	coef := new(big.Int).Mul(n, new(big.Int).SetUint64(uint64(step.coef)))
+	if new(big.Int).Abs(coef).Cmp(new(big.Int).SetUint64(maxFint)) > 0 {
+		if !errors.Is(err, ErrOverflow) {
+			t.Errorf("%v = %v, %v, want ErrOverflow", name, got, err)
+		}
+		return
+	}
+	if err != nil {
+		t.Errorf("%v failed: %v", name, err)
+		return
+	}
+	validDecimal(t, name, got)
+	want := new(big.Rat).Mul(new(big.Rat).SetInt(n), ratOf(step))
+	if ratOf(got).Cmp(want) != 0 || got.Scale() != step.Scale() {
+		t.Errorf("%v = %q (scale %v), want %v at scale %v", name, got, got.Scale(), want.FloatString(20), step.Scale())
+	}
+}
+
+func checkIsMultipleOf(t *testing.T, d, step Decimal) {
+	t.Helper()
+	want := false
+	if step.Sign() > 0 {
+		want = new(big.Rat).Quo(ratOf(d), ratOf(step)).IsInt()
+	}
+	if got := d.IsMultipleOf(step); got != want {
+		t.Errorf("(%v).IsMultipleOf(%v) = %v, want %v", d, step, got, want)
+	}
+}
+
+func FuzzRound(f *testing.F) {
+	for _, s := range fuzzSeeds {
+		for mode := Floor; mode <= HalfEven; mode++ {
+			f.Add(s.coefD, s.scaleD, s.scaleE, uint8(mode))
 		}
 	}
+	f.Fuzz(func(t *testing.T, coef int64, scale, target, mode uint8) {
+		d, ok := newOrSkip(t, coef, scale)
+		if !ok {
+			t.Skip()
+		}
+		checkRound(t, d, int(target), RoundingMode(mode%6))
+	})
+}
+
+func FuzzRoundStep(f *testing.F) {
+	for _, s := range fuzzSeeds {
+		for mode := Floor; mode <= HalfEven; mode++ {
+			f.Add(s.coefD, s.scaleD, s.coefE, s.scaleE, uint8(mode))
+		}
+	}
+	f.Fuzz(func(t *testing.T, coefD int64, scaleD uint8, coefS int64, scaleS, mode uint8) {
+		d, ok := newOrSkip(t, coefD, scaleD)
+		step, ok2 := newOrSkip(t, coefS, scaleS)
+		if !ok || !ok2 {
+			t.Skip()
+		}
+		checkRoundStep(t, d, step, RoundingMode(mode%6))
+	})
+}
+
+func FuzzIsMultipleOf(f *testing.F) {
+	addSeeds(f)
+	f.Fuzz(func(t *testing.T, coefD int64, scaleD uint8, coefS int64, scaleS uint8) {
+		d, ok := newOrSkip(t, coefD, scaleD)
+		step, ok2 := newOrSkip(t, coefS, scaleS)
+		if !ok || !ok2 {
+			t.Skip()
+		}
+		checkIsMultipleOf(t, d, step)
+	})
 }

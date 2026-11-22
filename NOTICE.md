@@ -69,3 +69,42 @@ table instead of listing it.
 - `Sub` error text names `+` with the negated operand (as upstream: it calls `AddExact(e.Neg(), 0)`).
 - Unexported constant `scaleMin` replaces `MinScale`.
 - Unit tests: `TestBint_prec` is generated; `rshUp` and `bint.rshDown` tests are gone with the code.
+- Rounding is a `RoundingMode` API (`Round(scale, mode)`, `RoundStep`) instead of the upstream
+  methods `Round`, `Floor`, `Ceil`, `Trunc`, `Pad`, `Rescale`, `Trim`. `Round` never pads;
+  `Rescale` and `Trim` are new and differ from upstream's `Rescale`/`Trim`.
+
+## New code (not derived from upstream)
+
+These files contain no upstream code and carry no attribution header:
+
+| File | Contents |
+| --- | --- |
+| `round.go` | `RoundingMode`, `Round`, `Rescale`, `Trim`, `RoundStep`, `IsMultipleOf`, `ErrInvalidStep`, `ErrInvalidMode`, `ErrInexact` |
+| `convert.go` | `NewFromFloat64`, `Float64`, `Int64` |
+| `fuzz_test.go`, `round_test.go`, `convert_test.go`, `bench_test.go` | tests, fuzzers, benchmarks, allocation checks |
+
+`round.go` uses the ported `fint`/`bint` helpers (`quoRem`, `lsh`, `mul`, `dbl`, `inc`, ...) and the
+ported `trim`; `Trim` is a wrapper over it. `NewFromFloat64` uses the ported `parse`, and
+`Float64` is upstream's `String` + `strconv.ParseFloat` approach (upstream `Float64`, same
+semantics: nearest float, `ok` false only on a conversion error). `NewFromFloat64` differs from
+upstream (which used `strconv.AppendFloat(..., 'f', -1, 64)`): it uses `'g'`, so no 300-digit
+strings are built for large or tiny floats.
+
+## Benchmarks
+
+`go test -run '^$' -bench . -benchmem .` on Apple M1 Pro, darwin/arm64, Go 1.27:
+
+| Benchmark | ns/op | B/op | allocs/op |
+| --- | ---: | ---: | ---: |
+| Parse `65000.1` | 25.16 | 0 | 0 |
+| Parse `0.012` | 20.32 | 0 | 0 |
+| String | 18.01 | 8 | 1 |
+| Add | 5.73 | 0 | 0 |
+| Mul | 5.34 | 0 | 0 |
+| Quo exact (`65000.17 / 0.01`) | 32.29 | 0 | 0 |
+| Quo inexact (`65000.17 / 0.012`) | 298.8 | 40 | 2 |
+| Cmp | 5.99 | 0 | 0 |
+| RoundStep `65000.17` step `0.1` HalfUp | 6.29 | 0 | 0 |
+| RoundStep `0.01234` step `0.001` Floor | 7.23 | 0 | 0 |
+
+An inexact `Quo` takes the `*big.Int` path (upstream behaviour) and allocates.
