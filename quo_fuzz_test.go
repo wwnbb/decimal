@@ -10,8 +10,7 @@ import (
 // checkQuoRound compares QuoRound with the exact big.Rat quotient:
 // n is the number of digits of its integer part, the scale is
 // s = min(scale, MaxPrec-n) and the value is rounded to s digits by the mode.
-// If that rounding carries to 10^19 the result is 10^(19-s) with scale s-1,
-// or ErrOverflow when s is 0.
+// The rounded coefficient must stay below 10^19: QuoRound has no carry branch.
 func checkQuoRound(t *testing.T, d, e Decimal, scale int, mode RoundingMode) {
 	t.Helper()
 	name := fmt.Sprintf("(%v).QuoRound(%v, %v, %v)", d, e, scale, mode)
@@ -37,14 +36,8 @@ func checkQuoRound(t *testing.T, d, e Decimal, scale int, mode RoundingMode) {
 	s := min(max(scale, 0), MaxScale, MaxPrec-n)
 	N := roundRatInt(new(big.Rat).Mul(x, ratPow10(s)), mode)
 	if new(big.Int).Abs(N).Cmp(bigTen19) >= 0 {
-		if s == 0 {
-			if !errors.Is(err, ErrOverflow) {
-				t.Errorf("%v = %v, %v, want ErrOverflow (carry)", name, got, err)
-			}
-			return
-		}
-		N.Quo(N, big.NewInt(10))
-		s--
+		t.Errorf("%v: rounded coefficient %v exceeds the digit budget (carry is unreachable, see QuoRound)", name, N)
+		return
 	}
 	if err != nil {
 		t.Errorf("%v failed: %v (x = %v)", name, err, x.FloatString(30))
